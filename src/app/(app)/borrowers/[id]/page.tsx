@@ -1,0 +1,1 @@
+import { BorrowerDetail } from "@/components/borrower-detail";export default async function BorrowerPage({params}:{params:Promise<{id:string}>}){const{id}=await params;return <BorrowerDetail id={id}/>}

@@ -1,0 +1,2 @@
+import { expect,test } from "@playwright/test";
+test("administrator login is accessible and has no public registration",async({page})=>{await page.goto("/");await expect(page.getByRole("heading",{name:"Administrator sign in"})).toBeVisible();await expect(page.getByLabel("Email address")).toBeVisible();await expect(page.getByText(/public registration/i)).toBeVisible();await expect(page.getByRole("link",{name:/sign up/i})).toHaveCount(0)});

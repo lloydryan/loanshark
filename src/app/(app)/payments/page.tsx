@@ -1,0 +1,1 @@
+import { Payments } from "@/components/payments";import { ReversePayment } from "@/components/reverse-payment";export default function PaymentsPage(){return <div className="space-y-7"><Payments/><ReversePayment/></div>}

@@ -1,0 +1,80 @@
+[debug] [2026-10-16T09:20:50.562Z] ----------------------------------------------------------------------
+[debug] [2026-10-16T09:20:50.569Z] Command:       C:\Program Files\nodejs\node.exe C:\Users\LLOYD\pautang\node_modules\firebase-tools\lib\bin\firebase.js deploy --only firestore:rules,firestore:indexes --project loanshark-eed0f
+[debug] [2026-10-16T09:20:50.573Z] CLI Version:   15.34.0
+[debug] [2026-10-16T09:20:50.573Z] Platform:      win32
+[debug] [2026-10-16T09:20:50.574Z] Node Version:  v22.19.0
+[debug] [2026-10-16T09:20:50.576Z] Detected Agent: codex_cli
+[debug] [2026-10-16T09:20:50.576Z] Time:          Fri Oct 16 2026 17:20:50 GMT+0800 (Singapore Standard Time)
+[debug] [2026-10-16T09:20:50.579Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2026-10-16T09:20:50.623Z] >>> [apiv2][query] GET https://firebase-public.firebaseio.com/cli.json [none]
+[debug] [2026-10-16T09:21:45.125Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2026-10-16T09:21:45.126Z] > authorizing via signed-in user (largolloydryan@gmail.com)
+[debug] [2026-10-16T09:21:45.127Z] [iam] checking project loanshark-eed0f for permissions ["datastore.indexes.create","datastore.indexes.delete","datastore.indexes.list","datastore.indexes.update","firebase.projects.get"]
+[debug] [2026-10-16T09:21:45.137Z] Checked if tokens are valid: false, expires at: 1791962726060
+[debug] [2026-10-16T09:21:45.138Z] Checked if tokens are valid: false, expires at: 1791962726060
+[debug] [2026-10-16T09:21:45.139Z] > refreshing access token with scopes: []
+[debug] [2026-10-16T09:21:45.155Z] >>> [apiv2][query] POST https://www.googleapis.com/oauth2/v3/token [none]
+[debug] [2026-10-16T09:21:45.155Z] >>> [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-10-16T09:21:45.611Z] <<< [apiv2][status] POST https://www.googleapis.com/oauth2/v3/token 200
+[debug] [2026-10-16T09:21:45.611Z] <<< [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-10-16T09:21:45.652Z] >>> [apiv2][query] POST https://cloudresourcemanager.googleapis.com/v1/projects/loanshark-eed0f:testIamPermissions [none]
+[debug] [2026-10-16T09:21:45.652Z] >>> [apiv2][(partial)header] POST https://cloudresourcemanager.googleapis.com/v1/projects/loanshark-eed0f:testIamPermissions  x-goog-user-project=loanshark-eed0f
+[debug] [2026-10-16T09:21:45.652Z] >>> [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/loanshark-eed0f:testIamPermissions {"permissions":["datastore.indexes.create","datastore.indexes.delete","datastore.indexes.list","datastore.indexes.update","firebase.projects.get"]}
+[debug] [2026-10-16T09:21:45.842Z] <<< [apiv2][status] GET https://firebase-public.firebaseio.com/cli.json 200
+[debug] [2026-10-16T09:21:45.842Z] <<< [apiv2][body] GET https://firebase-public.firebaseio.com/cli.json {"cloudBuildErrorAfter":1594252800000,"cloudBuildWarnAfter":1590019200000,"defaultNode10After":1594252800000,"minVersion":"3.0.5","node8DeploysDisabledAfter":1613390400000,"node8RuntimeDisabledAfter":1615809600000,"node8WarnAfter":1600128000000}
+[debug] [2026-10-16T09:21:46.374Z] <<< [apiv2][status] POST https://cloudresourcemanager.googleapis.com/v1/projects/loanshark-eed0f:testIamPermissions 403
+[debug] [2026-10-16T09:21:46.377Z] <<< [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/loanshark-eed0f:testIamPermissions {"error":{"code":403,"message":"Caller does not have required permission to use project loanshark-eed0f. Grant the caller the roles/serviceusage.serviceUsageConsumer role, or a custom role with the serviceusage.services.use permission, by visiting https://console.developers.google.com/iam-admin/iam?project=loanshark-eed0f and then retry. Propagation of the new permission may take a few minutes.","status":"PERMISSION_DENIED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"USER_PROJECT_DENIED","domain":"googleapis.com","metadata":{"consoleUrl":"https://console.developers.google.com/iam-admin/iam?project=loanshark-eed0f","consumer":"projects/loanshark-eed0f","containerInfo":"loanshark-eed0f","service":"cloudresourcemanager.googleapis.com"}},{"@type":"type.googleapis.com/google.rpc.LocalizedMessage","locale":"en-US","message":"Caller does not have required permission to use project loanshark-eed0f. Grant the caller the roles/serviceusage.serviceUsageConsumer role, or a custom role with the serviceusage.services.use permission, by visiting https://console.developers.google.com/iam-admin/iam?project=loanshark-eed0f and then retry. Propagation of the new permission may take a few minutes."},{"@type":"type.googleapis.com/google.rpc.Help","links":[{"description":"Google developer console IAM admin","url":"https://console.developers.google.com/iam-admin/iam?project=loanshark-eed0f"}]}]}}
+[debug] [2026-10-16T09:21:46.383Z] [iam] error while checking permissions, command may fail: Request to https://cloudresourcemanager.googleapis.com/v1/projects/loanshark-eed0f:testIamPermissions had HTTP Error: 403, Caller does not have required permission to use project loanshark-eed0f. Grant the caller the roles/serviceusage.serviceUsageConsumer role, or a custom role with the serviceusage.services.use permission, by visiting https://console.developers.google.com/iam-admin/iam?project=loanshark-eed0f and then retry. Propagation of the new permission may take a few minutes.
+[info] 
+[info] === Deploying to 'loanshark-eed0f'...
+[info] 
+[info] i  deploying firestore 
+[info] i  firestore: ensuring required API firestore.googleapis.com is enabled... 
+[debug] [2026-10-16T09:21:46.403Z] Checked if tokens are valid: true, expires at: 1792146104612
+[debug] [2026-10-16T09:21:46.404Z] Checked if tokens are valid: true, expires at: 1792146104612
+[debug] [2026-10-16T09:21:46.406Z] >>> [apiv2][query] GET https://serviceusage.googleapis.com/v1/projects/loanshark-eed0f/services/firestore.googleapis.com [none]
+[debug] [2026-10-16T09:21:46.409Z] >>> [apiv2][(partial)header] GET https://serviceusage.googleapis.com/v1/projects/loanshark-eed0f/services/firestore.googleapis.com  x-goog-user-project=loanshark-eed0f
+[debug] [2026-10-16T09:21:47.859Z] <<< [apiv2][status] GET https://serviceusage.googleapis.com/v1/projects/loanshark-eed0f/services/firestore.googleapis.com 403
+[debug] [2026-10-16T09:21:47.860Z] <<< [apiv2][body] GET https://serviceusage.googleapis.com/v1/projects/loanshark-eed0f/services/firestore.googleapis.com [omitted]
+[error] 
+[error] Error: Request to https://serviceusage.googleapis.com/v1/projects/loanshark-eed0f/services/firestore.googleapis.com had HTTP Error: 403, Caller does not have required permission to use project loanshark-eed0f. Grant the caller the roles/serviceusage.serviceUsageConsumer role, or a custom role with the serviceusage.services.use permission, by visiting https://console.developers.google.com/iam-admin/iam?project=loanshark-eed0f and then retry. Propagation of the new permission may take a few minutes.
+[debug] [2026-10-16T09:21:47.870Z] Error Context: {
+  "body": {
+    "error": {
+      "code": 403,
+      "message": "Caller does not have required permission to use project loanshark-eed0f. Grant the caller the roles/serviceusage.serviceUsageConsumer role, or a custom role with the serviceusage.services.use permission, by visiting https://console.developers.google.com/iam-admin/iam?project=loanshark-eed0f and then retry. Propagation of the new permission may take a few minutes.",
+      "status": "PERMISSION_DENIED",
+      "details": [
+        {
+          "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+          "reason": "USER_PROJECT_DENIED",
+          "domain": "googleapis.com",
+          "metadata": {
+            "service": "serviceusage.googleapis.com",
+            "consoleUrl": "https://console.developers.google.com/iam-admin/iam?project=loanshark-eed0f",
+            "containerInfo": "loanshark-eed0f",
+            "consumer": "projects/loanshark-eed0f"
+          }
+        },
+        {
+          "@type": "type.googleapis.com/google.rpc.LocalizedMessage",
+          "locale": "en-US",
+          "message": "Caller does not have required permission to use project loanshark-eed0f. Grant the caller the roles/serviceusage.serviceUsageConsumer role, or a custom role with the serviceusage.services.use permission, by visiting https://console.developers.google.com/iam-admin/iam?project=loanshark-eed0f and then retry. Propagation of the new permission may take a few minutes."
+        },
+        {
+          "@type": "type.googleapis.com/google.rpc.Help",
+          "links": [
+            {
+              "description": "Google developer console IAM admin",
+              "url": "https://console.developers.google.com/iam-admin/iam?project=loanshark-eed0f"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "response": {
+    "statusCode": 403
+  }
+}

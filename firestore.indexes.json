@@ -1,0 +1,11 @@
+{
+  "indexes": [
+    { "collectionGroup": "payments", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "borrowerId", "order": "ASCENDING" }, { "fieldPath": "paymentDate", "order": "DESCENDING" }] },
+    { "collectionGroup": "payments", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "loanId", "order": "ASCENDING" }, { "fieldPath": "paymentDate", "order": "DESCENDING" }] },
+    { "collectionGroup": "loanInstallments", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "loanId", "order": "ASCENDING" }, { "fieldPath": "installmentNumber", "order": "ASCENDING" }] },
+    { "collectionGroup": "loanInstallments", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "dueDate", "order": "ASCENDING" }] },
+    { "collectionGroup": "journalLines", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "loanId", "order": "ASCENDING" }, { "fieldPath": "occurredAt", "order": "DESCENDING" }] },
+    { "collectionGroup": "journalLines", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "account", "order": "ASCENDING" }, { "fieldPath": "occurredAt", "order": "DESCENDING" }] }
+  ],
+  "fieldOverrides": []
+}

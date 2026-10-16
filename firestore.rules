@@ -1,0 +1,63 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthorizedAdmin() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.active == true;
+    }
+
+    // A signed-in user must be able to read only their own administrator record
+    // before the application can establish that they are active.
+    match /admins/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    match /borrowers/{id} {
+      allow read, create, update: if isAuthorizedAdmin();
+    }
+    match /loans/{id} {
+      allow read, create, update: if isAuthorizedAdmin();
+    }
+    match /loanInstallments/{id} {
+      allow read, create, update: if isAuthorizedAdmin();
+    }
+    match /payments/{id} {
+      allow read, create, update: if isAuthorizedAdmin();
+    }
+    match /paymentAllocations/{id} {
+      allow read, create, update: if isAuthorizedAdmin();
+    }
+    match /financialAccounts/{id} {
+      allow read, create, update: if isAuthorizedAdmin();
+    }
+    match /settings/{id} {
+      allow read, create, update: if isAuthorizedAdmin();
+    }
+    match /journalEntries/{id} {
+      allow read, create: if isAuthorizedAdmin();
+      allow update, delete: if false;
+    }
+    match /journalLines/{id} {
+      allow read, create: if isAuthorizedAdmin();
+      allow update, delete: if false;
+    }
+    match /auditLogs/{id} {
+      allow read, create: if isAuthorizedAdmin();
+      allow update, delete: if false;
+    }
+    match /idempotencyKeys/{id} {
+      allow read, create: if isAuthorizedAdmin();
+      allow update, delete: if false;
+    }
+    match /reconciliations/{id} {
+      allow read, create: if isAuthorizedAdmin();
+      allow update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

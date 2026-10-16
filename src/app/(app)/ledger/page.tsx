@@ -1,0 +1,1 @@
+import { HistoryTable } from "@/components/history-table";import { CashAdjustment } from "@/components/cash-adjustment";export default function LedgerPage(){return <div className="space-y-7"><HistoryTable type="ledger"/><CashAdjustment/></div>}
