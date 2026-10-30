@@ -1164,8 +1164,13 @@ async function history(url: URL) {
   const type = url.searchParams.get("type") as keyof typeof config;
   if (!config[type]) return json({ error: "Invalid history type." }, 400);
   const [name, field] = config[type];
+  const values = await rows(name);
+  const filtered =
+    type === "ledger"
+      ? values.filter((item) => item.account === "cash")
+      : values;
   return json({
-    data: sortDate(await rows(name), field).slice(
+    data: sortDate(filtered, field).slice(
       0,
       Math.min(Number(url.searchParams.get("limit") ?? 100), 250),
     ),

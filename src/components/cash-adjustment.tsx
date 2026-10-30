@@ -15,7 +15,16 @@ const typeLabels: Record<string, string> = {
   adjustment_out: "Approved cash outflow",
 };
 
-export function CashAdjustment() {
+function displayAmount(value: string) {
+  if (!value) return "—";
+  try {
+    return formatPHP(pesosToCentavos(value));
+  } catch {
+    return "Invalid amount";
+  }
+}
+
+export function CashAdjustment({ onPosted }: { onPosted?: () => void }) {
   const [type, setType] = useState("capital_addition");
   const [amount, setAmount] = useState("");
   const [notes, setNotes] = useState("");
@@ -54,6 +63,7 @@ export function CashAdjustment() {
     idempotencyKey.current = crypto.randomUUID();
     setAmount("");
     setNotes("");
+    onPosted?.();
   }
 
   return (
@@ -113,7 +123,7 @@ export function CashAdjustment() {
         description="Review the details before adding this entry to the cash ledger."
         details={[
           { label: "Type", value: typeLabels[type] },
-          { label: "Amount", value: formatPHP(pesosToCentavos(amount)) },
+          { label: "Amount", value: displayAmount(amount) },
           { label: "Date", value: date },
           { label: "Reason", value: notes },
         ]}

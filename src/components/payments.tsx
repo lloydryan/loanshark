@@ -13,6 +13,10 @@ type Loan = {
   accruedInterestCentavos: number;
   status: string;
 };
+type Borrower = {
+  id: string;
+  fullName: string;
+};
 type Payment = {
   id: string;
   receiptNumber: string;
@@ -25,6 +29,7 @@ type Payment = {
 };
 export function Payments() {
   const [loans, setLoans] = useState<Loan[]>([]);
+  const [borrowers, setBorrowers] = useState<Borrower[]>([]);
   const [history, setHistory] = useState<Payment[]>([]);
   const [loanId, setLoanId] = useState("");
   const [amount, setAmount] = useState("");
@@ -36,9 +41,10 @@ export function Payments() {
   const [confirming, setConfirming] = useState(false);
   const idempotencyKey = useRef(crypto.randomUUID());
   async function load() {
-    const [a, b] = await Promise.all([
+    const [a, b, c] = await Promise.all([
       fetch("/api/loans").then((r) => r.json()),
       fetch("/api/payments").then((r) => r.json()),
+      fetch("/api/borrowers?limit=100").then((r) => r.json()),
     ]);
     setLoans(
       (a.data ?? []).filter((x: Loan) =>
@@ -46,6 +52,7 @@ export function Payments() {
       ),
     );
     setHistory(b.data ?? []);
+    setBorrowers(c.data ?? []);
   }
   useEffect(() => {
     load();
@@ -54,6 +61,12 @@ export function Payments() {
     () => loans.find((x) => x.id === loanId),
     [loans, loanId],
   );
+  const borrowerNames = useMemo(
+    () => new Map(borrowers.map((borrower) => [borrower.id, borrower.fullName])),
+    [borrowers],
+  );
+  const loanLabel = (loan: Loan) =>
+    `${borrowerNames.get(loan.borrowerId) ?? "Unknown borrower"} · ${loan.id}`;
   function submit(e: React.FormEvent) {
     e.preventDefault();
     try {
@@ -110,11 +123,13 @@ export function Payments() {
                 required
               >
                 <option value="">Select active loan</option>
-                {loans.map((x) => (
+                {[...loans]
+                  .sort((a, b) => loanLabel(a).localeCompare(loanLabel(b)))
+                  .map((x) => (
                   <option key={x.id} value={x.id}>
-                    {x.id} · {x.borrowerId}
+                    {loanLabel(x)}
                   </option>
-                ))}
+                  ))}
               </select>
             </Field>
             {selected && (
@@ -260,7 +275,10 @@ export function Payments() {
             label: "Amount",
             value: amount ? formatPHP(pesosToCentavos(amount)) : "—",
           },
-          { label: "Loan", value: loanId },
+          {
+            label: "Loan",
+            value: selected ? loanLabel(selected) : loanId,
+          },
           { label: "Payment date", value: date },
           { label: "Method", value: method.replaceAll("_", " ") },
         ]}
