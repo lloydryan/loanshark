@@ -6,6 +6,37 @@ export interface AllocationResult {
   unappliedCentavos: Centavos;
 }
 
+export type EarlyPaymentPolicy =
+  | "advance_installments"
+  | "principal_prepayment";
+
+/**
+ * Returns the balances a payment may be applied to on its posting date.
+ * Interest on future installments is never collectible before it accrues, but
+ * their principal may be paid early under either supported early-payment policy.
+ */
+export function eligibleInstallmentsForPayment(
+  installments: InstallmentBalance[],
+  paymentDate: string,
+  isFullSettlement: boolean,
+  earlyPaymentPolicy: EarlyPaymentPolicy = "advance_installments",
+): InstallmentBalance[] {
+  return installments
+    .filter(
+      (row) =>
+        isFullSettlement ||
+        row.dueDate <= paymentDate ||
+        ["advance_installments", "principal_prepayment"].includes(
+          earlyPaymentPolicy,
+        ),
+    )
+    .map((row) =>
+      row.dueDate > paymentDate
+        ? { ...row, outstandingInterestCentavos: 0 }
+        : row,
+    );
+}
+
 export function allocatePayment(amountCentavos: Centavos, installments: InstallmentBalance[]): AllocationResult {
   assertCentavos(amountCentavos);
   if (amountCentavos <= 0) throw new Error("Payment must be positive.");

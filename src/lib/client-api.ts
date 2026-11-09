@@ -17,7 +17,11 @@ import {
 } from "firebase/firestore";
 import { generateSchedule, summarizeSchedule } from "@/domain/amortization";
 import { assertBalanced, paymentJournal } from "@/domain/ledger";
-import { allocatePayment } from "@/domain/payments";
+import {
+  allocatePayment,
+  eligibleInstallmentsForPayment,
+  type EarlyPaymentPolicy,
+} from "@/domain/payments";
 import {
   reconcileJournals,
   type ReconciliationIssue,
@@ -27,7 +31,13 @@ import type {
   JournalEntry,
   JournalLine,
 } from "@/domain/types";
-import { borrowerSchema, loanSchema, paymentSchema } from "@/lib/validation";
+import {
+  borrowerSchema,
+  loanBorrowerCorrectionSchema,
+  loanSchema,
+  paymentLoanCorrectionSchema,
+  paymentSchema,
+} from "@/lib/validation";
 import { clientAuth, clientDb } from "@/lib/firebase-client";
 
 const nativeFetch =
@@ -331,10 +341,12 @@ async function createLoan(body: unknown) {
     const keyRef = doc(db, "idempotencyKeys", input.idempotencyKey);
     const borrowerRef = doc(db, "borrowers", input.borrowerId);
     const accountRef = doc(db, "financialAccounts", "cash");
-    const [existing, borrower, account] = await Promise.all([
+    const settingsRef = doc(db, "settings", "business");
+    const [existing, borrower, account, businessSettings] = await Promise.all([
       tx.get(keyRef),
       tx.get(borrowerRef),
       tx.get(accountRef),
+      tx.get(settingsRef),
     ]);
     if (existing.exists()) return existing.data().result;
     if (!borrower.exists() || borrower.data().status === "archived")
@@ -364,6 +376,8 @@ async function createLoan(body: unknown) {
       principalPaidCentavos: 0,
       interestPaidCentavos: 0,
       status: "active",
+      earlyPaymentPolicy:
+        businessSettings.data()?.earlyPaymentPolicy ?? "advance_installments",
       notes: input.notes,
       schemaVersion: 1,
       createdBy: uid,
@@ -466,6 +480,64 @@ async function loanDetail(loanId: string) {
   });
 }
 
+async function correctLoanBorrower(loanId: string, body: unknown) {
+  const input = loanBorrowerCorrectionSchema.parse(body);
+  const db = clientDb();
+  const loanRef = doc(db, "loans", loanId);
+  const borrowerRef = doc(db, "borrowers", input.borrowerId);
+  const [loan, borrower, installments, payments] = await Promise.all([
+    getDoc(loanRef),
+    getDoc(borrowerRef),
+    getDocs(
+      query(collection(db, "loanInstallments"), where("loanId", "==", loanId)),
+    ),
+    getDocs(query(collection(db, "payments"), where("loanId", "==", loanId))),
+  ]);
+
+  if (!loan.exists()) return json({ error: "Loan not found." }, 404);
+  if (!borrower.exists() || borrower.data().status === "archived") {
+    return json({ error: "Select an active borrower." }, 400);
+  }
+
+  const previousBorrowerId = String(loan.data().borrowerId);
+  if (previousBorrowerId === input.borrowerId) {
+    return json({ error: "This loan already belongs to that borrower." }, 400);
+  }
+
+  const batch = writeBatch(db);
+  batch.update(loanRef, {
+    borrowerId: input.borrowerId,
+    updatedAt: serverTimestamp(),
+  });
+  installments.docs.forEach((item) =>
+    batch.update(item.ref, { borrowerId: input.borrowerId }),
+  );
+  payments.docs.forEach((item) =>
+    batch.update(item.ref, { borrowerId: input.borrowerId }),
+  );
+  batch.set(doc(collection(db, "auditLogs")), {
+    action: "loan.borrower_corrected",
+    entityType: "loan",
+    entityId: loanId,
+    adminUid: currentUid(),
+    previousBorrowerId,
+    borrowerId: input.borrowerId,
+    reason: input.reason,
+    affectedInstallments: installments.size,
+    affectedPayments: payments.size,
+    createdAt: serverTimestamp(),
+  });
+  await batch.commit();
+
+  return json({
+    ok: true,
+    previousBorrowerId,
+    borrowerId: input.borrowerId,
+    affectedInstallments: installments.size,
+    affectedPayments: payments.size,
+  });
+}
+
 async function listPayments() {
   return json({
     data: sortDate(await rows("payments"), "paymentDate").slice(0, 100),
@@ -523,14 +595,13 @@ async function createPayment(body: unknown) {
       Number(loanData.remainingPrincipalCentavos) +
       Number(loanData.accruedInterestCentavos);
     const isFullSettlement = input.amountCentavos === settlementAmount;
-    const payable = installments
-      .map((item) => item.data() as InstallmentBalance)
-      .filter((item) => isFullSettlement || item.dueDate <= input.paymentDate)
-      .map((item) =>
-        isFullSettlement && item.dueDate > input.paymentDate
-          ? { ...item, outstandingInterestCentavos: 0 }
-          : item,
-      );
+    const payable = eligibleInstallmentsForPayment(
+      installments.map((item) => item.data() as InstallmentBalance),
+      input.paymentDate,
+      isFullSettlement,
+      (loanData.earlyPaymentPolicy ??
+        "advance_installments") as EarlyPaymentPolicy,
+    );
     const allocation = allocatePayment(input.amountCentavos, payable);
     if (allocation.unappliedCentavos)
       throw new Error("Payment contains an unapplied amount.");
@@ -665,6 +736,344 @@ async function createPayment(body: unknown) {
   return json(result, 201);
 }
 
+async function correctPaymentLoan(paymentId: string, body: unknown) {
+  const input = paymentLoanCorrectionSchema.parse(body);
+  const db = clientDb();
+  const paymentRef = doc(db, "payments", paymentId);
+  const paymentBefore = await getDoc(paymentRef);
+  if (!paymentBefore.exists()) return json({ error: "Payment not found." }, 404);
+
+  const paymentBeforeData = paymentBefore.data();
+  if (paymentBeforeData.status !== "posted") {
+    return json({ error: "Only a posted payment can be corrected." }, 400);
+  }
+  if (paymentBeforeData.loanId === input.loanId) {
+    return json({ error: "Select a different loan for this payment." }, 400);
+  }
+
+  const [sourceAllocations, originalLines, sourceInstallments, targetInstallments] =
+    await Promise.all([
+      getDocs(
+        query(
+          collection(db, "paymentAllocations"),
+          where("paymentId", "==", paymentId),
+        ),
+      ),
+      getDocs(
+        query(
+          collection(db, "journalLines"),
+          where("journalEntryId", "==", paymentBeforeData.journalEntryId),
+        ),
+      ),
+      getDocs(
+        query(
+          collection(db, "loanInstallments"),
+          where("loanId", "==", paymentBeforeData.loanId),
+        ),
+      ),
+      getDocs(
+        query(
+          collection(db, "loanInstallments"),
+          where("loanId", "==", input.loanId),
+        ),
+      ),
+    ]);
+
+  const sourceInstallmentByNumber = new Map(
+    sourceInstallments.docs.map((item) => [item.data().installmentNumber, item.ref]),
+  );
+  const sourceRefs = sourceAllocations.docs.map((allocation) => {
+    const ref = sourceInstallmentByNumber.get(allocation.data().installmentNumber);
+    if (!ref) throw new Error("A payment allocation references a missing installment.");
+    return ref;
+  });
+  const targetRefs = targetInstallments.docs.map((item) => item.ref);
+  const correctedPaymentId = id("PAY");
+  const reversalJournalId = id("JE");
+  const correctedJournalId = id("JE");
+  const correctedReceipt = receiptNumber();
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
+  const result = await runTransaction(db, async (tx) => {
+    const keyRef = doc(db, "idempotencyKeys", input.idempotencyKey);
+    const sourceLoanRef = doc(db, "loans", String(paymentBeforeData.loanId));
+    const targetLoanRef = doc(db, "loans", input.loanId);
+    const [
+      key,
+      payment,
+      sourceLoan,
+      targetLoan,
+      ...installmentRows
+    ] = await Promise.all([
+      tx.get(keyRef),
+      tx.get(paymentRef),
+      tx.get(sourceLoanRef),
+      tx.get(targetLoanRef),
+      ...sourceRefs.map((ref) => tx.get(ref)),
+      ...targetRefs.map((ref) => tx.get(ref)),
+    ]);
+
+    if (key.exists()) return key.data().result;
+    if (!payment.exists() || payment.data().status !== "posted") {
+      throw new Error("This payment is no longer available for correction.");
+    }
+    if (!sourceLoan.exists() || !targetLoan.exists()) {
+      throw new Error("The original or corrected loan no longer exists.");
+    }
+
+    const targetLoanData = targetLoan.data();
+    if (!['active', 'overdue'].includes(String(targetLoanData.status))) {
+      throw new Error("The corrected loan is not payable.");
+    }
+
+    const sourceRows = installmentRows.slice(0, sourceRefs.length);
+    const targetRows = installmentRows.slice(sourceRefs.length);
+    const currentPayment = payment.data();
+    const amountCentavos = Number(currentPayment.amountCentavos);
+    const settlementAmount =
+      Number(targetLoanData.remainingPrincipalCentavos) +
+      Number(targetLoanData.accruedInterestCentavos);
+    const isFullSettlement = amountCentavos === settlementAmount;
+    const payable = eligibleInstallmentsForPayment(
+      targetRows.map((item) => item.data() as InstallmentBalance),
+      String(currentPayment.paymentDate),
+      isFullSettlement,
+      (targetLoanData.earlyPaymentPolicy ??
+        "advance_installments") as EarlyPaymentPolicy,
+    );
+    const allocation = allocatePayment(amountCentavos, payable);
+    if (allocation.unappliedCentavos) {
+      throw new Error("Payment exceeds the corrected loan's collectible balance.");
+    }
+    const correctedPrincipal = allocation.allocations.reduce(
+      (sum, item) => sum + item.principalCentavos,
+      0,
+    );
+    const correctedInterest = allocation.allocations.reduce(
+      (sum, item) => sum + item.interestCentavos,
+      0,
+    );
+    if (correctedInterest > Number(targetLoanData.accruedInterestCentavos ?? 0)) {
+      throw new Error("The correction would collect interest that has not accrued.");
+    }
+
+    sourceAllocations.docs.forEach((allocationDoc, index) => {
+      const installment = sourceRows[index];
+      if (!installment?.exists()) {
+        throw new Error("A payment allocation references a missing installment.");
+      }
+      const allocated = allocationDoc.data();
+      const current = installment.data();
+      const interestPaid =
+        Number(current.interestPaidCentavos) - Number(allocated.interestCentavos);
+      const principalPaid =
+        Number(current.principalPaidCentavos) - Number(allocated.principalCentavos);
+      if (interestPaid < 0 || principalPaid < 0) {
+        throw new Error("The original payment can no longer be safely corrected.");
+      }
+      const outstandingInterest = Number(current.interestCentavos) - interestPaid;
+      const outstandingPrincipal = Number(current.principalCentavos) - principalPaid;
+      tx.update(installment.ref, {
+        interestPaidCentavos: interestPaid,
+        principalPaidCentavos: principalPaid,
+        waivedInterestCentavos: 0,
+        outstandingInterestCentavos: outstandingInterest,
+        outstandingPrincipalCentavos: outstandingPrincipal,
+        status:
+          current.dueDate < today
+            ? interestPaid + principalPaid
+              ? "partial"
+              : "overdue"
+            : interestPaid + principalPaid
+              ? "partial"
+              : "upcoming",
+      });
+      tx.update(allocationDoc.ref, {
+        status: "corrected",
+        correctedAt: serverTimestamp(),
+        correctedToPaymentId: correctedPaymentId,
+        reversalJournalId,
+      });
+    });
+
+    allocation.allocations.forEach((item, index) => {
+      const installment = targetRows.find(
+        (row) => row.data()?.installmentNumber === item.installmentNumber,
+      );
+      if (!installment?.exists()) {
+        throw new Error("A corrected payment installment is missing.");
+      }
+      const current = installment.data() as InstallmentBalance;
+      const interestPaid = current.interestPaidCentavos + item.interestCentavos;
+      const principalPaid = current.principalPaidCentavos + item.principalCentavos;
+      const waivedInterest =
+        isFullSettlement && current.dueDate > currentPayment.paymentDate
+          ? current.interestCentavos - interestPaid
+          : 0;
+      const outstandingInterest =
+        current.interestCentavos - interestPaid - waivedInterest;
+      const outstandingPrincipal = current.principalCentavos - principalPaid;
+      tx.update(installment.ref, {
+        interestPaidCentavos: interestPaid,
+        principalPaidCentavos: principalPaid,
+        waivedInterestCentavos: waivedInterest,
+        outstandingInterestCentavos: outstandingInterest,
+        outstandingPrincipalCentavos: outstandingPrincipal,
+        status:
+          outstandingInterest + outstandingPrincipal === 0 ? "paid" : "partial",
+      });
+      tx.set(doc(db, "paymentAllocations", `${correctedPaymentId}_${index + 1}`), {
+        paymentId: correctedPaymentId,
+        loanId: input.loanId,
+        ...item,
+        createdAt: serverTimestamp(),
+      });
+    });
+
+    const sourceLoanData = sourceLoan.data();
+    tx.update(sourceLoanRef, {
+      remainingPrincipalCentavos:
+        Number(sourceLoanData.remainingPrincipalCentavos) +
+        Number(currentPayment.principalCentavos),
+      accruedInterestCentavos:
+        Number(sourceLoanData.accruedInterestCentavos) +
+        Number(currentPayment.interestCentavos),
+      principalPaidCentavos:
+        Number(sourceLoanData.principalPaidCentavos) -
+        Number(currentPayment.principalCentavos),
+      interestPaidCentavos:
+        Number(sourceLoanData.interestPaidCentavos) -
+        Number(currentPayment.interestCentavos),
+      scheduledFutureInterestCentavos:
+        Number(sourceLoanData.scheduledFutureInterestCentavos) +
+        Number(currentPayment.futureInterestWaivedCentavos ?? 0),
+      ...(currentPayment.futureInterestWaivedCentavos ? { settledEarly: false } : {}),
+      status: sourceLoanData.finalPaymentDate < today ? "overdue" : "active",
+      updatedAt: serverTimestamp(),
+    });
+
+    const remainingPrincipal =
+      Number(targetLoanData.remainingPrincipalCentavos) - correctedPrincipal;
+    const remainingInterest =
+      Number(targetLoanData.accruedInterestCentavos) - correctedInterest;
+    tx.update(targetLoanRef, {
+      remainingPrincipalCentavos: remainingPrincipal,
+      accruedInterestCentavos: remainingInterest,
+      principalPaidCentavos:
+        Number(targetLoanData.principalPaidCentavos) + correctedPrincipal,
+      interestPaidCentavos:
+        Number(targetLoanData.interestPaidCentavos) + correctedInterest,
+      ...(isFullSettlement
+        ? {
+            scheduledFutureInterestCentavos: 0,
+            settledEarly: currentPayment.paymentDate < targetLoanData.finalPaymentDate,
+          }
+        : {}),
+      status:
+        remainingPrincipal === 0 && remainingInterest === 0
+          ? "fully_paid"
+          : targetLoanData.status,
+      updatedAt: serverTimestamp(),
+    });
+
+    tx.update(paymentRef, {
+      status: "corrected",
+      correctionReason: input.reason,
+      correctedAt: serverTimestamp(),
+      correctedBy: currentUid(),
+      correctedToPaymentId: correctedPaymentId,
+      correctedToLoanId: input.loanId,
+      reversalJournalId,
+    });
+    tx.set(doc(db, "payments", correctedPaymentId), {
+      loanId: input.loanId,
+      borrowerId: targetLoanData.borrowerId,
+      amountCentavos,
+      principalCentavos: correctedPrincipal,
+      interestCentavos: correctedInterest,
+      isFullSettlement,
+      futureInterestWaivedCentavos: isFullSettlement
+        ? Number(targetLoanData.scheduledFutureInterestCentavos)
+        : 0,
+      paymentDate: currentPayment.paymentDate,
+      method: currentPayment.method,
+      referenceNumber: currentPayment.referenceNumber ?? "",
+      notes: currentPayment.notes ?? "",
+      receiptNumber: correctedReceipt,
+      status: "posted",
+      journalEntryId: correctedJournalId,
+      correctedFromPaymentId: paymentId,
+      originalReceiptNumber: currentPayment.receiptNumber,
+      correctionReason: input.reason,
+      createdBy: currentUid(),
+      createdAt: serverTimestamp(),
+      schemaVersion: 1,
+    });
+
+    writeJournal(tx, db, {
+      id: reversalJournalId,
+      eventType: "reversal",
+      occurredAt: `${currentPayment.paymentDate}T00:00:00+08:00`,
+      referenceType: "payment_correction",
+      referenceId: paymentId,
+      description: `Correction of payment ${paymentId}: ${input.reason}`,
+      reversalOf: currentPayment.journalEntryId,
+      lines: originalLines.docs.map((line) => ({
+        account: line.data().account,
+        debitCentavos: Number(line.data().creditCentavos),
+        creditCentavos: Number(line.data().debitCentavos),
+        borrowerId: line.data().borrowerId,
+        loanId: line.data().loanId,
+      })),
+    });
+    writeJournal(
+      tx,
+      db,
+      paymentJournal({
+        id: correctedJournalId,
+        occurredAt: `${currentPayment.paymentDate}T00:00:00+08:00`,
+        paymentId: correctedPaymentId,
+        loanId: input.loanId,
+        borrowerId: String(targetLoanData.borrowerId),
+        principalCentavos: correctedPrincipal,
+        interestCentavos: correctedInterest,
+      }),
+    );
+
+    const value = {
+      paymentId,
+      correctedPaymentId,
+      correctedReceiptNumber: correctedReceipt,
+      previousLoanId: currentPayment.loanId,
+      loanId: input.loanId,
+      reversalJournalId,
+      correctedJournalId,
+    };
+    tx.set(doc(collection(db, "auditLogs")), {
+      action: "payment.loan_corrected",
+      entityType: "payment",
+      entityId: paymentId,
+      adminUid: currentUid(),
+      reason: input.reason,
+      ...value,
+      createdAt: serverTimestamp(),
+    });
+    tx.set(keyRef, {
+      operation: "payment.loan_correction",
+      result: value,
+      createdAt: serverTimestamp(),
+    });
+    return value;
+  });
+
+  return json(result);
+}
+
 async function reversePayment(paymentId: string, body: DocumentData) {
   const reason = String(body.reason ?? "").trim();
   if (body.confirmed !== true || reason.length < 10) {
@@ -716,8 +1125,8 @@ async function reversePayment(paymentId: string, body: DocumentData) {
       ...installmentRefs.map((ref) => tx.get(ref)),
     ]);
     if (!payment.exists()) throw new Error("Payment not found.");
-    if (key.exists() || payment.data().status === "reversed")
-      throw new Error("This payment has already been reversed.");
+    if (key.exists() || payment.data().status !== "posted")
+      throw new Error("This payment is no longer available for reversal.");
     if (!loan.exists() || !account.exists())
       throw new Error("The payment loan or cash account is missing.");
     const currentPayment = payment.data();
@@ -1089,7 +1498,7 @@ async function dashboard(url: URL) {
     (item) =>
       item.paymentDate >= start &&
       item.paymentDate <= end &&
-      item.status !== "reversed",
+      item.status === "posted",
   );
   const lines = lineRows.filter(
     (item) =>
@@ -1121,13 +1530,25 @@ async function dashboard(url: URL) {
       row.disbursed += Number(item.creditCentavos);
     if (item.eventType === "payment" && item.account === "cash")
       row.collected += Number(item.debitCentavos);
+    if (item.eventType === "reversal" && item.account === "cash")
+      row.collected -= Number(item.creditCentavos);
     if (
       item.eventType === "payment" &&
       item.account === "loan_principal_receivable"
     )
       row.principal += Number(item.creditCentavos);
+    if (
+      item.eventType === "reversal" &&
+      item.account === "loan_principal_receivable"
+    )
+      row.principal -= Number(item.debitCentavos);
     if (item.eventType === "payment" && item.account === "interest_receivable")
       row.interest += Number(item.creditCentavos);
+    if (
+      item.eventType === "reversal" &&
+      item.account === "interest_receivable"
+    )
+      row.interest -= Number(item.debitCentavos);
     monthly.set(month, row);
   }
   return json({
@@ -1289,11 +1710,19 @@ async function route(url: URL, init?: RequestInit) {
   if (path === "/api/loans")
     return method === "POST" ? createLoan(body) : listLoans();
   const loan = path.match(/^\/api\/loans\/([^/]+)$/);
-  if (loan) return loanDetail(loan[1]);
+  if (loan)
+    return method === "PATCH"
+      ? correctLoanBorrower(loan[1], body)
+      : loanDetail(loan[1]);
   if (path === "/api/payments")
     return method === "POST" ? createPayment(body) : listPayments();
   const reversal = path.match(/^\/api\/payments\/([^/]+)\/reverse$/);
   if (reversal) return reversePayment(reversal[1], body);
+  const paymentCorrection = path.match(
+    /^\/api\/payments\/([^/]+)\/correct-loan$/,
+  );
+  if (paymentCorrection)
+    return correctPaymentLoan(paymentCorrection[1], body);
   const payment = path.match(/^\/api\/payments\/([^/]+)$/);
   if (payment) return paymentDetail(payment[1]);
   if (path === "/api/settings") return settings(method, body);

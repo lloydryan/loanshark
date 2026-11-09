@@ -1,11 +1,13 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowRightLeft } from "lucide-react";
 import { toast } from "sonner";
 import { formatPHP, pesosToCentavos } from "@/domain/money";
 import { Button } from "./ui/button";
 import { Field, inputClass } from "./ui/field";
 import { PageHeader, Panel } from "./ui/panel";
 import { ConfirmationDialog } from "./ui/confirmation-dialog";
+import { PaymentLoanCorrection } from "./payment-loan-correction";
 type Loan = {
   id: string;
   borrowerId: string;
@@ -26,6 +28,7 @@ type Payment = {
   principalCentavos: number;
   interestCentavos: number;
   method: string;
+  status: string;
 };
 export function Payments() {
   const [loans, setLoans] = useState<Loan[]>([]);
@@ -39,6 +42,7 @@ export function Payments() {
   const [notes, setNotes] = useState("");
   const [posting, setPosting] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [correcting, setCorrecting] = useState<Payment | null>(null);
   const idempotencyKey = useRef(crypto.randomUUID());
   async function load() {
     const [a, b, c] = await Promise.all([
@@ -70,7 +74,15 @@ export function Payments() {
   function submit(e: React.FormEvent) {
     e.preventDefault();
     try {
-      pesosToCentavos(amount);
+      const amountCentavos = pesosToCentavos(amount);
+      const maximum = selected
+        ? selected.remainingPrincipalCentavos + selected.accruedInterestCentavos
+        : 0;
+      if (selected && amountCentavos > maximum) {
+        return toast.error(
+          `Maximum payment for this loan is ${formatPHP(maximum)}.`,
+        );
+      }
       setConfirming(true);
     } catch {
       toast.error("Enter a valid payment amount.");
@@ -146,6 +158,10 @@ export function Payments() {
                     {formatPHP(selected.accruedInterestCentavos)}
                   </strong>
                 </div>
+                <p className="mt-3 border-t pt-3 text-xs leading-5 text-muted">
+                  Before an installment is due, payments reduce principal.
+                  Interest is collected only after it accrues.
+                </p>
               </div>
             )}
             <Field label="Amount (PHP)">
@@ -214,7 +230,7 @@ export function Payments() {
             </p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[750px] text-sm">
+              <table className="w-full min-w-[980px] text-sm">
                 <thead className="bg-slate-50 text-xs text-muted dark:bg-slate-900/40">
                   <tr>
                     {[
@@ -222,13 +238,15 @@ export function Payments() {
                       "Date",
                       "Loan",
                       "Method",
+                      "Status",
                       "Principal",
                       "Interest",
                       "Total",
+                      "Actions",
                     ].map((x, i) => (
                       <th
                         key={x}
-                        className={`px-4 py-3 ${i > 3 ? "text-right" : "text-left"}`}
+                        className={`px-4 py-3 ${i >= 5 ? "text-right" : "text-left"}`}
                       >
                         {x}
                       </th>
@@ -248,6 +266,11 @@ export function Payments() {
                       <td className="px-4 py-3 capitalize">
                         {x.method.replaceAll("_", " ")}
                       </td>
+                      <td className="px-4 py-3">
+                        <span className="rounded-full border px-2 py-1 text-xs capitalize">
+                          {x.status}
+                        </span>
+                      </td>
                       <td className="numeric px-4 py-3 text-right">
                         {formatPHP(x.principalCentavos)}
                       </td>
@@ -256,6 +279,21 @@ export function Payments() {
                       </td>
                       <td className="numeric px-4 py-3 text-right font-semibold">
                         {formatPHP(x.amountCentavos)}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {x.status === "posted" ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className="h-9 px-3"
+                            onClick={() => setCorrecting(x)}
+                          >
+                            <ArrowRightLeft size={15} />
+                            Correct loan
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-muted">—</span>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -286,6 +324,13 @@ export function Payments() {
         busyLabel="Posting payment…"
         busy={posting}
         onConfirm={postPayment}
+      />
+      <PaymentLoanCorrection
+        payment={correcting}
+        loans={loans}
+        borrowerNames={borrowerNames}
+        onClose={() => setCorrecting(null)}
+        onCorrected={load}
       />
     </div>
   );

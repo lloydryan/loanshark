@@ -82,8 +82,8 @@ export function ConfirmationDialog({
             </dl>
           )}
           <p className="mt-4 text-xs leading-5 text-muted">
-            This action creates permanent accounting records and cannot be
-            edited afterward.
+            This action creates permanent accounting records. Mistakes must be
+            corrected with compensating entries so the audit trail remains intact.
           </p>
           <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <Dialog.Close asChild>

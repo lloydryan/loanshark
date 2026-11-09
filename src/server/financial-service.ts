@@ -1,7 +1,11 @@
 import "server-only";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { generateSchedule, summarizeSchedule } from "@/domain/amortization";
-import { allocatePayment } from "@/domain/payments";
+import {
+  allocatePayment,
+  eligibleInstallmentsForPayment,
+  type EarlyPaymentPolicy,
+} from "@/domain/payments";
 import { assertBalanced, paymentJournal } from "@/domain/ledger";
 import type { InstallmentBalance, JournalLine } from "@/domain/types";
 import { adminDb } from "@/lib/firebase-admin";
@@ -33,7 +37,8 @@ export async function createAndDisburseLoan(raw: unknown, adminUid: string) {
     if (existing.exists) return existing.data()!.result as { loanId: string; journalId: string };
     const borrowerRef = db.collection("borrowers").doc(input.borrowerId);
     const accountRef = db.collection("financialAccounts").doc("cash");
-    const [borrower, account] = await Promise.all([transaction.get(borrowerRef), transaction.get(accountRef)]);
+    const settingsRef = db.collection("settings").doc("business");
+    const [borrower, account, businessSettings] = await Promise.all([transaction.get(borrowerRef), transaction.get(accountRef), transaction.get(settingsRef)]);
     if (!borrower.exists || borrower.data()?.status === "archived") throw new Error("Borrower is unavailable.");
     if (!account.exists) throw new Error("Opening cash balance must be configured before releasing loans.");
     const cashBalance = Number(account.data()?.balanceCentavos ?? 0);
@@ -58,6 +63,7 @@ export async function createAndDisburseLoan(raw: unknown, adminUid: string) {
       principalPaidCentavos: 0,
       interestPaidCentavos: 0,
       status: "active",
+      earlyPaymentPolicy: businessSettings.data()?.earlyPaymentPolicy ?? "advance_installments",
       notes: input.notes,
       schemaVersion: 1,
       createdBy: adminUid,
@@ -111,14 +117,12 @@ export async function recordPayment(raw: unknown, adminUid: string) {
     if (!account.exists) throw new Error("Cash account is not configured.");
     const settlementAmount = Number(loanData.remainingPrincipalCentavos) + Number(loanData.accruedInterestCentavos);
     const isFullSettlement = input.amountCentavos === settlementAmount;
-    const payable = installmentsSnapshot.docs
-      .filter((doc) => isFullSettlement || doc.data().dueDate <= input.paymentDate)
-      .map((doc) => {
-        const row = doc.data() as InstallmentBalance;
-        // Early settlement pays unearned periods' principal only. Contractual interest
-        // remains on the immutable schedule but is explicitly waived, never collected.
-        return isFullSettlement && row.dueDate > input.paymentDate ? { ...row, outstandingInterestCentavos: 0 } : row;
-      });
+    const payable = eligibleInstallmentsForPayment(
+      installmentsSnapshot.docs.map((doc) => doc.data() as InstallmentBalance),
+      input.paymentDate,
+      isFullSettlement,
+      (loanData.earlyPaymentPolicy ?? "advance_installments") as EarlyPaymentPolicy,
+    );
     const allocation = allocatePayment(input.amountCentavos, payable);
     if (allocation.unappliedCentavos) throw new Error("Payment contains an unapplied amount.");
     const principal = allocation.allocations.reduce((sum, item) => sum + item.principalCentavos, 0);
@@ -177,7 +181,7 @@ export async function reversePayment(paymentId: string, reason: string, adminUid
       transaction.get(paymentRef), transaction.get(reversalKeyRef), transaction.get(accountRef),
     ]);
     if (!payment.exists) throw new Error("Payment not found.");
-    if (reversalKey.exists || payment.data()!.status === "reversed") throw new Error("This payment has already been reversed.");
+    if (reversalKey.exists || payment.data()!.status !== "posted") throw new Error("This payment is no longer available for reversal.");
     if (!account.exists) throw new Error("Cash account is not configured.");
     const paymentData = payment.data()!;
     const [loan, allocations, originalLines] = await Promise.all([

@@ -30,3 +30,14 @@ export const paymentSchema = z.object({
   notes: z.string().trim().max(1000).default(""),
   idempotencyKey: z.string().uuid(),
 });
+
+export const loanBorrowerCorrectionSchema = z.object({
+  borrowerId: z.string().min(1),
+  reason: z.string().trim().min(10).max(500),
+});
+
+export const paymentLoanCorrectionSchema = z.object({
+  loanId: z.string().min(1),
+  reason: z.string().trim().min(10).max(500),
+  idempotencyKey: z.string().uuid(),
+});
